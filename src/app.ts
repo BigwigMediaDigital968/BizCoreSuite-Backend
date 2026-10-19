@@ -24,9 +24,7 @@ app.use(helmet());
 
 const allowedOrigins = [
   "http://localhost:5173",
-  "http://3.24.190.193",
-  "https://apex-crm-xi.vercel.app",
-  "https://www.dealqix.com",
+  "http://13.48.48.216:5173",
 ];
 
 app.use(
