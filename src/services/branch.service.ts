@@ -28,6 +28,8 @@ interface UpdateBranchInput {
   email?: string;
 }
 
+const MAX_BRANCHES_PER_USER = 1;
+
 const validateBranchId = (branchId: string) => {
   if (!Types.ObjectId.isValid(branchId)) {
     throw new AppError("Invalid branch ID", 400, "INVALID_BRANCH_ID");
@@ -38,6 +40,15 @@ export const createBranch = async (data: CreateBranchInput, userId: string) => {
   const existingBranch = await Branch.findOne({
     code: data.code.toUpperCase(),
   });
+
+  const totalBranchCount = await Branch.countDocuments();
+  if (totalBranchCount >= MAX_BRANCHES_PER_USER) {
+    throw new AppError(
+      `Branch limit reached. You cannot create more than ${MAX_BRANCHES_PER_USER} branches in this system.`,
+      400,
+      "BRANCH_LIMIT_EXCEEDED",
+    );
+  }
 
   if (existingBranch) {
     throw new AppError(
@@ -130,4 +141,3 @@ export const updateBranchStatus = async (
 
   return branch;
 };
-

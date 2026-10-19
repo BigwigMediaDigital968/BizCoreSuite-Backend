@@ -10,6 +10,8 @@ import type { UpdateUserInput, UserListQuery } from "../types/user.js";
 import { notify } from "../services/notification.service.js";
 import { NOTIFICATION_TYPES } from "../models/Notification.js";
 
+const MAX_TOTAL_USERS = 8;
+
 interface CreateUserInput {
   name: string;
   email: string;
@@ -60,6 +62,15 @@ export const createUser = async (
   creatorRole: Role,
 ) => {
   const { name, email, password, role, branches = [] } = data;
+
+  const totalUserCount = await User.countDocuments();
+  if (totalUserCount >= MAX_TOTAL_USERS) {
+    throw new AppError(
+      `User limit reached. You cannot create more than ${MAX_TOTAL_USERS} users in this system.`,
+      400,
+      "USER_LIMIT_EXCEEDED"
+    );
+  }
 
   if (!name?.trim()) {
     throw new AppError("Name is required", 400, "NAME_REQUIRED");
