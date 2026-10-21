@@ -25,7 +25,8 @@ app.use(helmet());
 
 app.use(
   cors({
-    origin: ["http://13.48.48.216:5173"],
+    // origin: ["http://13.48.48.216:5173"],
+    origin: env.clientUrl,
     credentials: true,
     methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
