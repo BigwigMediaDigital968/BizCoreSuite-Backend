@@ -22,6 +22,17 @@ app.disable("x-powered-by");
 
 app.use(helmet());
 
+app.use((req, res, next) => {
+  if (req.method === "OPTIONS") {
+    console.log("========== CORS DEBUG ==========");
+    console.log("Request Origin:", JSON.stringify(req.headers.origin));
+    console.log("Configured CLIENT_URL:", JSON.stringify(env.clientUrl));
+    console.log("Origins match:", req.headers.origin === env.clientUrl);
+    console.log("================================");
+  }
+
+  next();
+});
 
 app.use(
   cors({
