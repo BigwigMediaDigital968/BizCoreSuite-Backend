@@ -22,11 +22,11 @@ app.disable("x-powered-by");
 
 app.use(helmet());
 
-const allowedOrigins = ["http://localhost:5173", "http://13.48.48.216:5173"];
+const allowedOrigins = ["http://localhost:5173", "http://13.48.48.216"];
 
 app.use(
   cors({
-    origin: "http://13.48.48.216:5173",
+    origin: "http://13.48.48.216",
     credentials: true,
     methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
