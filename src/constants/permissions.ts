@@ -253,6 +253,14 @@ export const PERMISSIONS = {
   ACTIVITY_LOG_ATTENDANCE_VIEW: "activity-log:attendance:view",
   ACTIVITY_LOG_LEAVE_VIEW: "activity-log:leave:view",
   ACTIVITY_LOG_REVENUE_VIEW: "activity-log:revenue:view",
+
+  // =========================================================
+  // CHAT / INTERNAL COMMUNICATIONS
+  // =========================================================
+  CHAT_VIEW: "chat:view",
+  CHAT_CREATE: "chat:create",
+  CHAT_MANAGE: "chat:manage", // Reserved for HEAD & ADMIN to control employee chat access
 } as const;
+
 
 export type Permission = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];
