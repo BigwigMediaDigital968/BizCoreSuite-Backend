@@ -3,6 +3,8 @@ import { Types } from "mongoose";
 import { ChatRoom, ChatMessage, ChatMember } from "../models/Chat.js";
 import { User } from "../models/User.js";
 import { Branch } from "../models/Branch.js";
+import { NOTIFICATION_TYPES } from "../models/Notification.js";
+import { notify } from "../services/notification.service.js";
 import { getIO } from "../socket/index.js";
 import {
   canUserDirectMessage,
@@ -76,6 +78,7 @@ const buildRoomViews = async (rooms: any[], userId: string) => {
       type: room.type,
       branchId: room.branchId,
       isArchived: room.isArchived,
+      createdBy: room.createdBy?.toString(),
       createdAt: room.createdAt,
       updatedAt: room.updatedAt,
       lastMessage: room.lastMessage?.content ? room.lastMessage : undefined,
@@ -263,7 +266,7 @@ export const createChannelController = async (req: Request, res: Response) => {
       ]);
     }
 
-    const room = await ChatRoom.create({
+    const created = await ChatRoom.create({
       name,
       type,
       ...(type === "BRANCH" ? { branchId } : {}),
@@ -272,7 +275,49 @@ export const createChannelController = async (req: Request, res: Response) => {
       createdBy: currentUserId,
     });
 
-    // Members' open tabs refetch their room list, so the channel appears live.
+    // First line of the channel: who made it. It also gives every member an
+    // unread message (so the sidebar badge lights up) and a preview in their
+    // list, instead of an empty, unexplained row.
+    const creator = await User.findById(currentUserId).select("name").lean();
+    const creatorName = creator?.name ?? "Someone";
+    const intro = await ChatMessage.create({
+      roomId: created._id,
+      senderId: currentUserId,
+      kind: "SYSTEM",
+      content: `${creatorName} created this channel`,
+      readBy: [currentUserId],
+    });
+    const room = await ChatRoom.findByIdAndUpdate(
+      created._id,
+      {
+        $set: {
+          lastMessage: {
+            content: intro.content,
+            senderId: currentUserId,
+            createdAt: intro.createdAt,
+            isSystem: true,
+          },
+          lastMessageAt: intro.createdAt,
+        },
+      },
+      { returnDocument: "after" },
+    );
+    // The creator has, of course, read their own channel's first line.
+    await markRoomRead(created._id.toString(), currentUserId, intro.createdAt);
+
+    // Tell every added member: a bell notification (the sender is left out by
+    // notify()), then refresh their open tabs so the channel appears live.
+    // Notifications are fire-and-forget: the channel already exists.
+    notify({
+      userIds: [...memberIds],
+      senderId: currentUserId,
+      type: NOTIFICATION_TYPES.CHAT_CHANNEL_ADDED,
+      title: `Added to #${name}`,
+      message: `${creatorName} added you to the channel “${name}”.`,
+      entityId: created._id,
+      entityType: "ChatRoom",
+    }).catch((err) => console.error("[CHAT] channel notification failed", err));
+
     const io = getIO();
     memberIds.forEach((id) => io?.to(`user:${id}`).emit("chat:rooms_changed"));
 

@@ -10,6 +10,8 @@ export interface IChatRoom extends Document {
     content: string;
     senderId: mongoose.Types.ObjectId;
     createdAt: Date;
+    /** An event line ("X created this channel"), not something a person typed. */
+    isSystem?: boolean;
   };
   lastMessageAt?: Date;
   branchId?: mongoose.Types.ObjectId;
@@ -25,6 +27,8 @@ export interface IChatMessage extends Document {
   roomId: mongoose.Types.ObjectId;
   senderId: mongoose.Types.ObjectId;
   content: string;
+  /** Missing on older messages, which are all USER. */
+  kind?: "USER" | "SYSTEM";
   attachments?: { url: string; fileType: string }[];
   /** Users tagged with @name in `content`. Derived by the server, never trusted from the client. */
   mentions: mongoose.Types.ObjectId[];
@@ -56,6 +60,7 @@ const ChatRoomSchema = new Schema<IChatRoom>(
       content: { type: String },
       senderId: { type: Schema.Types.ObjectId, ref: "User" },
       createdAt: { type: Date },
+      isSystem: { type: Boolean },
     },
     lastMessageAt: { type: Date },
     branchId: { type: Schema.Types.ObjectId, ref: "Branch" },
@@ -76,6 +81,7 @@ const ChatMessageSchema = new Schema<IChatMessage>(
     roomId: { type: Schema.Types.ObjectId, ref: "ChatRoom", required: true, index: true },
     senderId: { type: Schema.Types.ObjectId, ref: "User", required: true },
     content: { type: String, required: true, trim: true },
+    kind: { type: String, enum: ["USER", "SYSTEM"], default: "USER" },
     attachments: [
       {
         url: { type: String, required: true },
