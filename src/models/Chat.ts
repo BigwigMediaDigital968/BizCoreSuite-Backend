@@ -26,6 +26,8 @@ export interface IChatMessage extends Document {
   senderId: mongoose.Types.ObjectId;
   content: string;
   attachments?: { url: string; fileType: string }[];
+  /** Users tagged with @name in `content`. Derived by the server, never trusted from the client. */
+  mentions: mongoose.Types.ObjectId[];
   readBy: mongoose.Types.ObjectId[];
   createdAt: Date;
   updatedAt: Date;
@@ -80,6 +82,7 @@ const ChatMessageSchema = new Schema<IChatMessage>(
         fileType: { type: String, required: true },
       },
     ],
+    mentions: [{ type: Schema.Types.ObjectId, ref: "User" }],
     readBy: [{ type: Schema.Types.ObjectId, ref: "User" }],
   },
   { timestamps: true }
@@ -87,6 +90,8 @@ const ChatMessageSchema = new Schema<IChatMessage>(
 
 // History pagination and unread counts both scan a room by time.
 ChatMessageSchema.index({ roomId: 1, createdAt: -1 });
+// "Messages in this room that mention me" (mention badges, search).
+ChatMessageSchema.index({ roomId: 1, mentions: 1, createdAt: -1 });
 
 const ChatMemberSchema = new Schema<IChatMember>(
   {

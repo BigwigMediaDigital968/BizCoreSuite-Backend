@@ -11,6 +11,7 @@ import {
   otherParticipantId,
 } from "../services/chatAccess.service.js";
 import { notify } from "../services/notification.service.js";
+import { extractMentionIds, mentionsToPlainText } from "../utils/mentions.js";
 import {
   roomIdPayloadSchema,
   sendMessageSchema,
@@ -179,10 +180,18 @@ export const initSocket = (server: HttpServer): Server => {
           return fail("Direct messages are turned off for this conversation");
         }
 
+        // Only people who are actually in this channel can be tagged; anything
+        // else in the text is ignored. A DM has one other person, so no tags.
+        const memberIds = new Set(room.participants.map(String));
+        const mentions = isDirect
+          ? []
+          : extractMentionIds(content).filter((id) => memberIds.has(id));
+
         const message = await ChatMessage.create({
           roomId,
           senderId: userId,
           content,
+          mentions,
           readBy: [userId],
         });
 
@@ -190,7 +199,7 @@ export const initSocket = (server: HttpServer): Server => {
           ChatRoom.updateOne({ _id: roomId } as any, {
             $set: {
               lastMessage: {
-                content: content.slice(0, 200),
+                content: mentionsToPlainText(content).slice(0, 200),
                 senderId: userId,
                 createdAt: message.createdAt,
               },
