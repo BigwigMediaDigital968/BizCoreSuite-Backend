@@ -18,6 +18,7 @@ import {
 
 const CHANNEL_TYPES = ["GLOBAL", "BRANCH"];
 const MAX_CHANNEL_NAME_LENGTH = 60;
+const MAX_CHANNEL_MEMBERS = 2000;
 const PARTICIPANT_FIELDS = "name email role isActive chatSettings";
 
 const escapeRegex = (value: string) =>
@@ -210,9 +211,30 @@ export const createChannelController = async (req: Request, res: Response) => {
     if (
       participants !== undefined &&
       (!Array.isArray(participants) ||
-        !participants.every((id) => Types.ObjectId.isValid(id)))
+        participants.length > MAX_CHANNEL_MEMBERS ||
+        !participants.every(
+          (id) => typeof id === "string" && Types.ObjectId.isValid(id),
+        ))
     ) {
       return fail(400, "participants must be a list of valid user ids");
+    }
+
+    // An explicit list is the whole membership (plus the creator); only
+    // active people can be added.
+    const chosenIds = participants
+      ? [...new Set<string>(participants.map(String))]
+      : null;
+    if (chosenIds) {
+      const activeCount = await User.countDocuments({
+        _id: { $in: chosenIds },
+        isActive: true,
+      } as any);
+      if (activeCount !== chosenIds.length) {
+        return fail(
+          400,
+          "Some of the selected people no longer exist or are inactive. Refresh the list and try again.",
+        );
+      }
     }
 
     const duplicate = await ChatRoom.exists({
@@ -225,17 +247,21 @@ export const createChannelController = async (req: Request, res: Response) => {
       return fail(409, "A channel with this name already exists");
     }
 
-    // Access is membership-only, so "company-wide" / "branch" just decide who
-    // is added now: every active user, or the branch's active members.
-    const memberFilter: Record<string, unknown> = { isActive: true };
-    if (type === "BRANCH") memberFilter.branches = branchId;
-    const members = await User.find(memberFilter as any).select("_id").lean();
-
-    const memberIds = new Set<string>([
-      currentUserId,
-      ...members.map((m) => m._id.toString()),
-      ...(participants || []).map(String),
-    ]);
+    // Access is membership-only. With an explicit list, that list is the
+    // membership. Without one, "company-wide" / "branch" decide who is added
+    // now: every active user, or the branch's active members.
+    let memberIds: Set<string>;
+    if (chosenIds) {
+      memberIds = new Set<string>([currentUserId, ...chosenIds]);
+    } else {
+      const memberFilter: Record<string, unknown> = { isActive: true };
+      if (type === "BRANCH") memberFilter.branches = branchId;
+      const members = await User.find(memberFilter as any).select("_id").lean();
+      memberIds = new Set<string>([
+        currentUserId,
+        ...members.map((m) => m._id.toString()),
+      ]);
+    }
 
     const room = await ChatRoom.create({
       name,
@@ -246,7 +272,38 @@ export const createChannelController = async (req: Request, res: Response) => {
       createdBy: currentUserId,
     });
 
+    // Members' open tabs refetch their room list, so the channel appears live.
+    const io = getIO();
+    memberIds.forEach((id) => io?.to(`user:${id}`).emit("chat:rooms_changed"));
+
     return res.status(201).json({ success: true, data: room });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// Head / admin: everyone who can be added to a channel, with the branches and
+// role the member picker filters by. Not limited by the DM switch.
+export const listChannelCandidatesController = async (
+  _req: Request,
+  res: Response,
+) => {
+  try {
+    const users = await User.find({ isActive: true } as any)
+      .select("_id name email role branches")
+      .populate("branches", "name")
+      .sort({ name: 1 })
+      .limit(MAX_CHANNEL_MEMBERS)
+      .lean();
+
+    const data = users.map((u: any) => ({
+      ...publicUser(u),
+      branches: (u.branches || [])
+        .filter(Boolean)
+        .map((b: any) => ({ _id: b._id.toString(), name: b.name })),
+    }));
+
+    return res.status(200).json({ success: true, data });
   } catch (error: any) {
     return res.status(500).json({ success: false, message: error.message });
   }

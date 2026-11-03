@@ -5,6 +5,7 @@ import {
   getRoomMessagesController,
   getUserChatSettingsController,
   getUserRoomsController,
+  listChannelCandidatesController,
   listChatUsersController,
   markRoomReadController,
   updateUserChatSettingsController,
@@ -30,6 +31,13 @@ router.post("/rooms/:roomId/read", markRoomReadController);
 
 // People the current user can start a direct message with
 router.get("/users", listChatUsersController);
+
+// Head / admin: everyone who can be added to a new channel
+router.get(
+  "/channel-candidates",
+  authorize(PERMISSIONS.CHAT_MANAGE),
+  listChannelCandidatesController,
+);
 
 // Head / admin: a user's direct-message switch
 router.get(
