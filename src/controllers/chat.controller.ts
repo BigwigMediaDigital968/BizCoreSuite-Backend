@@ -5,6 +5,12 @@ import { User } from "../models/User.js";
 import { Branch } from "../models/Branch.js";
 import { NOTIFICATION_TYPES } from "../models/Notification.js";
 import { notify } from "../services/notification.service.js";
+import {
+  joinNames,
+  postSystemMessage,
+  refreshRoomsFor,
+  removeFromRoomSockets,
+} from "../services/chatEvents.service.js";
 import { getIO } from "../socket/index.js";
 import {
   canUserDirectMessage,
@@ -280,30 +286,12 @@ export const createChannelController = async (req: Request, res: Response) => {
     // list, instead of an empty, unexplained row.
     const creator = await User.findById(currentUserId).select("name").lean();
     const creatorName = creator?.name ?? "Someone";
-    const intro = await ChatMessage.create({
-      roomId: created._id,
-      senderId: currentUserId,
-      kind: "SYSTEM",
-      content: `${creatorName} created this channel`,
-      readBy: [currentUserId],
-    });
-    const room = await ChatRoom.findByIdAndUpdate(
-      created._id,
-      {
-        $set: {
-          lastMessage: {
-            content: intro.content,
-            senderId: currentUserId,
-            createdAt: intro.createdAt,
-            isSystem: true,
-          },
-          lastMessageAt: intro.createdAt,
-        },
-      },
-      { returnDocument: "after" },
+    await postSystemMessage(
+      created._id.toString(),
+      currentUserId,
+      `${creatorName} created this channel`,
     );
-    // The creator has, of course, read their own channel's first line.
-    await markRoomRead(created._id.toString(), currentUserId, intro.createdAt);
+    const room = await ChatRoom.findById(created._id);
 
     // Tell every added member: a bell notification (the sender is left out by
     // notify()), then refresh their open tabs so the channel appears live.
@@ -570,6 +558,194 @@ export const updateUserChatSettingsController = async (
       success: true,
       data: { canDirectMessage: parsed.data.canDirectMessage },
     });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// --- Room info panel & membership changes ---------------------------------
+
+/** Only channels (not DMs) have a changing member list. */
+const findAccessibleChannel = async (roomId: string, userId: string) => {
+  const room = await findAccessibleRoom(roomId, userId);
+  return room && room.type !== "DIRECT" ? room : null;
+};
+
+// Profile data for the info panel: the room, and its people with their
+// branches. Members only (same 404 as everywhere, so ids can't be probed).
+export const getRoomInfoController = async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).user.id;
+    const roomId = String(req.params.roomId);
+
+    if (!(await findAccessibleRoom(roomId, userId))) {
+      return res.status(404).json({ success: false, message: "Chat not found" });
+    }
+
+    const room: any = await ChatRoom.findById(roomId)
+      .populate({
+        path: "participants",
+        select: "name email role isActive branches",
+        populate: { path: "branches", select: "name" },
+      })
+      .populate("branchId", "name")
+      .lean();
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        _id: room._id.toString(),
+        name: room.name,
+        type: room.type,
+        createdBy: room.createdBy?.toString(),
+        createdAt: room.createdAt,
+        branch: room.branchId
+          ? { _id: room.branchId._id.toString(), name: room.branchId.name }
+          : undefined,
+        participants: (room.participants || []).filter(Boolean).map((p: any) => ({
+          ...publicUser(p),
+          isActive: p.isActive,
+          branches: (p.branches || [])
+            .filter(Boolean)
+            .map((b: any) => ({ _id: b._id.toString(), name: b.name })),
+        })),
+      },
+    });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// Leave a channel. The last person leaving archives it.
+export const leaveRoomController = async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).user.id;
+    const roomId = String(req.params.roomId);
+
+    const room = await findAccessibleChannel(roomId, userId);
+    if (!room) {
+      return res.status(404).json({ success: false, message: "Channel not found" });
+    }
+
+    const remaining = room.participants.map(String).filter((id) => id !== userId);
+
+    if (remaining.length === 0) {
+      await ChatRoom.updateOne({ _id: roomId } as any, { $set: { isArchived: true } });
+    } else {
+      const me = await User.findById(userId).select("name").lean();
+      // Post first, while the leaver can still receive it, then remove them.
+      await postSystemMessage(roomId, userId, `${me?.name ?? "Someone"} left`);
+    }
+
+    await ChatRoom.updateOne({ _id: roomId } as any, { $pull: { participants: userId } });
+    await ChatMember.deleteOne({ roomId, userId } as any);
+    removeFromRoomSockets(roomId, userId);
+    refreshRoomsFor([userId, ...remaining]);
+
+    return res.status(200).json({ success: true });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// Head / admin: add people to a channel they are in.
+export const addRoomMembersController = async (req: Request, res: Response) => {
+  try {
+    const actorId = (req as any).user.id;
+    const roomId = String(req.params.roomId);
+    const userIds = req.body?.userIds;
+
+    const fail = (status: number, message: string) =>
+      res.status(status).json({ success: false, message });
+
+    if (
+      !Array.isArray(userIds) ||
+      userIds.length === 0 ||
+      userIds.length > MAX_CHANNEL_MEMBERS ||
+      !userIds.every((id) => typeof id === "string" && Types.ObjectId.isValid(id))
+    ) {
+      return fail(400, "userIds must be a list of valid user ids");
+    }
+
+    const room = await findAccessibleChannel(roomId, actorId);
+    if (!room) return fail(404, "Channel not found");
+
+    const current = new Set(room.participants.map(String));
+    const toAdd = [...new Set<string>(userIds)].filter((id) => !current.has(id));
+    const people = await User.find({ _id: { $in: toAdd }, isActive: true } as any)
+      .select("_id name")
+      .lean();
+    if (people.length === 0) {
+      return fail(400, "Everyone selected is already in this channel or is inactive.");
+    }
+
+    const addedIds = people.map((p) => p._id.toString());
+    await ChatRoom.updateOne({ _id: roomId } as any, {
+      $addToSet: { participants: { $each: addedIds } },
+    });
+
+    const actor = await User.findById(actorId).select("name").lean();
+    const actorName = actor?.name ?? "Someone";
+    await postSystemMessage(
+      roomId,
+      actorId,
+      `${actorName} added ${joinNames(people.map((p) => p.name))}`,
+    );
+
+    notify({
+      userIds: addedIds,
+      senderId: actorId,
+      type: NOTIFICATION_TYPES.CHAT_CHANNEL_ADDED,
+      title: `Added to #${room.name}`,
+      message: `${actorName} added you to the channel “${room.name}”.`,
+      entityId: roomId,
+      entityType: "ChatRoom",
+    }).catch((err) => console.error("[CHAT] add-members notification failed", err));
+
+    refreshRoomsFor([...current, ...addedIds]);
+
+    return res.status(200).json({ success: true, data: { added: addedIds.length } });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// Head / admin: remove someone else from a channel (use "leave" for yourself).
+export const removeRoomMemberController = async (req: Request, res: Response) => {
+  try {
+    const actorId = (req as any).user.id;
+    const roomId = String(req.params.roomId);
+    const targetId = String(req.params.userId);
+
+    const fail = (status: number, message: string) =>
+      res.status(status).json({ success: false, message });
+
+    if (!Types.ObjectId.isValid(targetId)) return fail(400, "Invalid user id");
+    if (targetId === actorId) return fail(400, "Use “Leave channel” to remove yourself");
+
+    const room = await findAccessibleChannel(roomId, actorId);
+    if (!room) return fail(404, "Channel not found");
+
+    const members = room.participants.map(String);
+    if (!members.includes(targetId)) return fail(404, "That person isn't in this channel");
+
+    const [actor, target] = await Promise.all([
+      User.findById(actorId).select("name").lean(),
+      User.findById(targetId).select("name").lean(),
+    ]);
+    // Post first, while the removed person can still receive it, then remove.
+    await postSystemMessage(
+      roomId,
+      actorId,
+      `${actor?.name ?? "Someone"} removed ${target?.name ?? "a member"}`,
+    );
+
+    await ChatRoom.updateOne({ _id: roomId } as any, { $pull: { participants: targetId } });
+    await ChatMember.deleteOne({ roomId, userId: targetId } as any);
+    removeFromRoomSockets(roomId, targetId);
+    refreshRoomsFor(members);
+
+    return res.status(200).json({ success: true });
   } catch (error: any) {
     return res.status(500).json({ success: false, message: error.message });
   }

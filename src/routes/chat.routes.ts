@@ -1,6 +1,10 @@
 import { Router } from "express";
 import {
+  addRoomMembersController,
   createChannelController,
+  getRoomInfoController,
+  leaveRoomController,
+  removeRoomMemberController,
   getOrCreateDirectRoomController,
   getRoomMessagesController,
   getUserChatSettingsController,
@@ -28,6 +32,24 @@ router.get("/rooms/:roomId/messages", getRoomMessagesController);
 
 // Mark a room as read (members only)
 router.post("/rooms/:roomId/read", markRoomReadController);
+
+// Profile data for the info panel (members only)
+router.get("/rooms/:roomId/info", getRoomInfoController);
+
+// Leave a channel (members only)
+router.post("/rooms/:roomId/leave", leaveRoomController);
+
+// Head / admin: add people to, or remove someone from, a channel
+router.post(
+  "/rooms/:roomId/members",
+  authorize(PERMISSIONS.CHAT_MANAGE),
+  addRoomMembersController,
+);
+router.delete(
+  "/rooms/:roomId/members/:userId",
+  authorize(PERMISSIONS.CHAT_MANAGE),
+  removeRoomMemberController,
+);
 
 // People the current user can start a direct message with
 router.get("/users", listChatUsersController);
