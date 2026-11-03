@@ -21,6 +21,10 @@ export interface IUser extends Document {
   role: Role;
   branches: Types.ObjectId[];
   isActive: boolean;
+  chatSettings: {
+    /** Head/admin-controlled. A DM needs both people to have this on. */
+    canDirectMessage: boolean;
+  };
   createdBy?: Types.ObjectId;
   createdAt: Date;
   updatedAt: Date;
@@ -63,6 +67,14 @@ const userSchema = new Schema<IUser>(
     isActive: {
       type: Boolean,
       default: true,
+    },
+
+    // Existing users have no value stored; treat missing as `true`.
+    chatSettings: {
+      canDirectMessage: {
+        type: Boolean,
+        default: true,
+      },
     },
 
     createdBy: {

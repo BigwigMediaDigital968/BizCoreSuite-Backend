@@ -257,9 +257,9 @@ export const PERMISSIONS = {
   // =========================================================
   // CHAT / INTERNAL COMMUNICATIONS
   // =========================================================
-  CHAT_VIEW: "chat:view",
-  CHAT_CREATE: "chat:create",
-  CHAT_MANAGE: "chat:manage", // Reserved for HEAD & ADMIN to control employee chat access
+  // Using chat needs no permission (access is per-room membership);
+  // manage = create channels, manage members, set users' DM switch.
+  CHAT_MANAGE: "chat:manage", // Reserved for HEAD & ADMIN
 } as const;
 
 

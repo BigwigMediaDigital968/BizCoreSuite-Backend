@@ -1,28 +1,13 @@
-import { Server, Socket } from "socket.io";
 import { EventEmitter } from "events";
 import { Notification, NOTIFICATION_TYPES } from "../models/Notification.js";
 import { User } from "../models/User.js";
 import { ROLES } from "../constants/roles.js";
+import { getIO } from "./index.js";
 
 export const appEvents = new EventEmitter();
 
-let ioServer: Server | null = null;
-
-export const initSocket = (io: Server) => {
-  ioServer = io;
-
-  io.on("connection", (socket: Socket) => {
-    const userId = socket.handshake.query.userId as string;
-    const role = socket.handshake.query.role as string;
-
-    if (userId) socket.join(`user:${userId}`);
-    if (role) socket.join(`role:${role}`);
-
-    socket.on("disconnect", () => {
-      // Automatic cleanup handled by socket.io
-    });
-  });
-};
+// Connections (and their authenticated user:<id> rooms) are set up in
+// socket/index.ts; this module only pushes to them.
 
 // Unified Push Function
 export const sendNotification = async (payload: {
@@ -48,9 +33,10 @@ export const sendNotification = async (payload: {
   const savedNotifications = await Notification.insertMany(docs);
 
   // 2. Real-Time Socket Push
+  const ioServer = getIO();
   if (ioServer) {
     savedNotifications.forEach((notification) => {
-      ioServer!
+      ioServer
         .to(`user:${notification.recipient.toString()}`)
         .emit("NOTIFICATION_RECEIVED", notification);
     });

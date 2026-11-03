@@ -166,6 +166,9 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     PERMISSIONS.DAILY_REPORT_REVIEW,
     PERMISSIONS.DAILY_REPORT_EXPORT,
 
+    // Chat (manage = create channels / control access)
+    PERMISSIONS.CHAT_MANAGE,
+
     // Audit
     PERMISSIONS.AUDIT_VIEW,
     PERMISSIONS.AUDIT_READ,

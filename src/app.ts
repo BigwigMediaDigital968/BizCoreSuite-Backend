@@ -82,4 +82,5 @@ app.use(globalRateLimiter);
 app.use("/api/v1", apiRoutes);
 app.use(errorHandler);
 
+export { server };
 export default app;
