@@ -571,6 +571,20 @@ const findAccessibleChannel = async (roomId: string, userId: string) => {
   return room && room.type !== "DIRECT" ? room : null;
 };
 
+/**
+ * A channel a head / admin may manage (add or remove people) whether or not
+ * they are in it themselves: these routes already require chat:manage. This
+ * is about membership only; it does not let them read the messages.
+ */
+const findManageableChannel = async (roomId: string) =>
+  Types.ObjectId.isValid(roomId)
+    ? ChatRoom.findOne({
+        _id: roomId,
+        isArchived: false,
+        type: { $ne: "DIRECT" },
+      } as any).lean()
+    : null;
+
 // Profile data for the info panel: the room, and its people with their
 // branches. Members only (same 404 as everywhere, so ids can't be probed).
 export const getRoomInfoController = async (req: Request, res: Response) => {
@@ -667,7 +681,7 @@ export const addRoomMembersController = async (req: Request, res: Response) => {
       return fail(400, "userIds must be a list of valid user ids");
     }
 
-    const room = await findAccessibleChannel(roomId, actorId);
+    const room = await findManageableChannel(roomId);
     if (!room) return fail(404, "Channel not found");
 
     const current = new Set(room.participants.map(String));
@@ -723,7 +737,7 @@ export const removeRoomMemberController = async (req: Request, res: Response) =>
     if (!Types.ObjectId.isValid(targetId)) return fail(400, "Invalid user id");
     if (targetId === actorId) return fail(400, "Use “Leave channel” to remove yourself");
 
-    const room = await findAccessibleChannel(roomId, actorId);
+    const room = await findManageableChannel(roomId);
     if (!room) return fail(404, "Channel not found");
 
     const members = room.participants.map(String);
@@ -746,6 +760,51 @@ export const removeRoomMemberController = async (req: Request, res: Response) =>
     refreshRoomsFor(members);
 
     return res.status(200).json({ success: true });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// Head / admin: the channels a person is in, and the ones they could be added
+// to. Powers the Access tab on the employee profile.
+export const getUserChannelAccessController = async (
+  req: Request,
+  res: Response,
+) => {
+  try {
+    const targetId = String(req.params.userId);
+    if (!Types.ObjectId.isValid(targetId)) {
+      return res.status(400).json({ success: false, message: "Invalid user id" });
+    }
+    if (!(await User.exists({ _id: targetId } as any))) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    const rooms: any[] = await ChatRoom.find({
+      isArchived: false,
+      type: { $in: CHANNEL_TYPES },
+    } as any)
+      .select("name type branchId participants createdBy")
+      .populate("branchId", "name")
+      .sort({ name: 1 })
+      .lean();
+
+    const member: unknown[] = [];
+    const available: unknown[] = [];
+    for (const r of rooms) {
+      const view = {
+        _id: r._id.toString(),
+        name: r.name,
+        type: r.type,
+        branch: r.branchId ? { _id: r.branchId._id.toString(), name: r.branchId.name } : undefined,
+        memberCount: (r.participants || []).length,
+        isCreator: r.createdBy?.toString() === targetId,
+      };
+      const isMember = (r.participants || []).some((p: any) => p.toString() === targetId);
+      (isMember ? member : available).push(view);
+    }
+
+    return res.status(200).json({ success: true, data: { member, available } });
   } catch (error: any) {
     return res.status(500).json({ success: false, message: error.message });
   }

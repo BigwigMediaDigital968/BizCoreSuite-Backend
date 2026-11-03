@@ -3,6 +3,7 @@ import {
   addRoomMembersController,
   createChannelController,
   getRoomInfoController,
+  getUserChannelAccessController,
   leaveRoomController,
   removeRoomMemberController,
   getOrCreateDirectRoomController,
@@ -66,6 +67,12 @@ router.get(
   "/users/:userId/settings",
   authorize(PERMISSIONS.CHAT_MANAGE),
   getUserChatSettingsController,
+);
+// Head / admin: which channels a person is in, and which they could join
+router.get(
+  "/users/:userId/channel-access",
+  authorize(PERMISSIONS.CHAT_MANAGE),
+  getUserChannelAccessController,
 );
 router.patch(
   "/users/:userId/settings",

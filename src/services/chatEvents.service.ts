@@ -32,8 +32,11 @@ export const postSystemMessage = async (
       lastMessageAt: message.createdAt,
     },
   });
-  // The person who caused the event doesn't need it flagged as unread.
-  await markRoomRead(roomId, actorId, message.createdAt);
+  // The person who caused the event doesn't need it flagged as unread. (A
+  // head / admin managing a channel they aren't in has no read state to keep.)
+  if (await ChatRoom.exists({ _id: roomId, participants: actorId } as any)) {
+    await markRoomRead(roomId, actorId, message.createdAt);
+  }
 
   const populated = await message.populate("senderId", "name email role");
   getIO()?.to(`chat:${roomId}`).emit("chat:new_message", populated.toObject());
